@@ -79,8 +79,8 @@ def generar_visualizacion(df):
     mapa.get_root().html.add_child(folium.Element(plantilla_final))
 
     # Guardar
-    mapa.save("mapa_pro.html")
-    print("✅ ¡Hecho! Abre 'mapa_pro.html' para ver el resultado.")
+    mapa.save("index.html")
+    print("✅ ¡Hecho! Abre 'index.html' para ver el resultado.")
 
 if __name__ == "__main__":
     datos = obtener_datos_canarias()
