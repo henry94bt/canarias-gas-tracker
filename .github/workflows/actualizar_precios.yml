@@ -18,7 +18,7 @@ jobs:
           python-version: '3.10'
 
       - name: Instalar librerías
-        run: pip install requests pandas folium
+        run: pip install requests pandas folium pytz
 
       - name: Ejecutar script de precios
         run: python mapa_pro.py
