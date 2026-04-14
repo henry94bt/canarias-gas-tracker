@@ -28,6 +28,36 @@ def obtener_datos_canarias():
     except Exception as e:
         print(f"❌ Error al obtener datos: {e}")
         return None
+import os
+
+def actualizar_historico(df):
+    print("💾 3. Guardando histórico de precios...")
+    
+    # Nos quedamos solo con las columnas clave para el análisis
+    columnas_clave = ['Fecha', 'Rótulo', 'Localidad', 'IDProvincia', 'Precio Gasolina 95 E5', 'Precio Gasoleo A']
+    
+    # Creamos una copia y le añadimos la fecha de la extracción
+    df_historico = df.copy()
+    fecha_hoy = datetime.now().strftime("%Y-%m-%d")
+    df_historico['Fecha'] = fecha_hoy
+    
+    # Filtramos para tener solo lo que nos interesa
+    df_historico = df_historico[columnas_clave]
+    
+    # Ruta del archivo maestro
+    archivo_csv = 'historico_precios.csv'
+    
+    # Si el archivo ya existe, lo abrimos, le pegamos los datos nuevos debajo y guardamos
+    if os.path.exists(archivo_csv):
+        historico_previo = pd.read_csv(archivo_csv)
+        # Concatenamos y evitamos duplicados por si el robot corre dos veces el mismo día
+        historico_actualizado = pd.concat([historico_previo, df_historico]).drop_duplicates(subset=['Fecha', 'Rótulo', 'Localidad'])
+    else:
+        # Si es el primer día, este dataframe es nuestro archivo base
+        historico_actualizado = df_historico
+        
+    historico_actualizado.to_csv(archivo_csv, index=False)
+    print(f"📈 ¡Histórico actualizado! Total de registros: {len(historico_actualizado)}")
 
 def generar_visualizacion(df):
     if df is None: return
@@ -90,3 +120,4 @@ def generar_visualizacion(df):
 if __name__ == "__main__":
     datos = obtener_datos_canarias()
     generar_visualizacion(datos)
+    actualizar_historico(datos)

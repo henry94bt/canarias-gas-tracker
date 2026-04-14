@@ -1,0 +1,21 @@
+=========================================
+🔄 CICLO DE ACTUALIZACIÓN DEL PROYECTO
+=========================================
+
+1. REGLA DE ORO: Antes de empezar, bajar cambios del robot:
+   git pull origin main
+
+2. TRABAJO LOCAL:
+   - Modificar mapa_pro.py o el .yml
+   - Probar en local: python mapa_pro.py
+
+3. SUBIR MEJORAS A GITHUB:
+   git add .
+   git commit -m "Explicar aquí qué has cambiado"
+   git push
+
+4. SI HAY CONFLICTO EN INDEX.HTML (Error al hacer push):
+   git checkout --ours index.html
+   git add .
+   git commit -m "Conflicto resuelto"
+   git push
