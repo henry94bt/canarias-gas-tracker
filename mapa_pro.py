@@ -119,5 +119,11 @@ def generar_visualizacion(df):
 
 if __name__ == "__main__":
     datos = obtener_datos_canarias()
-    generar_visualizacion(datos)
-    actualizar_historico(datos)
+    
+    # Comprobamos si realmente tenemos datos antes de seguir
+    if datos is not None and not datos.empty:
+        generar_visualizacion(datos)
+        actualizar_historico(datos)
+        print("✅ Todo actualizado correctamente.")
+    else:
+        print("⚠️ No se pudieron obtener datos hoy. El servidor del Ministerio no responde.")
