@@ -5,8 +5,9 @@ from folium.plugins import MarkerCluster, Search
 from datetime import datetime
 import pytz
 import os
+import json
 
-# Diccionario de Municipios - Asegúrate de que los nombres coinciden con la API
+# 1. DICCIONARIO DE ISLAS (Para el filtrado de la tabla y el mapa)
 MUNICIPIOS_ISLAS = {
     'Arrecife': 'Lanzarote', 'Haría': 'Lanzarote', 'San Bartolomé': 'Lanzarote', 'Teguise': 'Lanzarote', 'Tías': 'Lanzarote', 'Tinajo': 'Lanzarote', 'Yaiza': 'Lanzarote',
     'Antigua': 'Fuerteventura', 'Betancuria': 'Fuerteventura', 'La Oliva': 'Fuerteventura', 'Pájara': 'Fuerteventura', 'Puerto del Rosario': 'Fuerteventura', 'Tuineje': 'Fuerteventura',
@@ -17,32 +18,46 @@ MUNICIPIOS_ISLAS = {
     'Frontera': 'El Hierro', 'El Pinar de El Hierro': 'El Hierro', 'Valverde': 'El Hierro'
 }
 
+# 2. OBTENCIÓN DE DATOS (CON CAMUFLAJE ANTI-BLOQUEO)
 def obtener_datos():
     url = "https://sedeaplicaciones.minetur.gob.es/ServiciosRESTCarburantes/PreciosCarburantes/EstacionesTerrestres/"
-    r = requests.get(url, timeout=30)
-    df = pd.DataFrame(r.json()['ListaEESSPrecio'])
-    df = df[df['IDProvincia'].isin(['35', '38'])].copy()
-    for c in ['Precio Gasolina 95 E5', 'Precio Gasoleo A', 'Latitud', 'Longitud (WGS84)']:
-        df[c] = pd.to_numeric(df[c].str.replace(',', '.'), errors='coerce')
-    # Solo tiramos las que no tienen coordenadas. Si no tienen precio, las dejamos para el mapa.
-    return df.dropna(subset=['Latitud', 'Longitud (WGS84)'])
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    
+    try:
+        with requests.Session() as session:
+            r = session.get(url, headers=headers, timeout=30)
+            r.raise_for_status()
+            df = pd.DataFrame(r.json()['ListaEESSPrecio'])
+            
+            # Filtrar Canarias
+            df = df[df['IDProvincia'].isin(['35', '38'])].copy()
+            
+            # Limpiar precios y coordenadas
+            for c in ['Precio Gasolina 95 E5', 'Precio Gasoleo A', 'Latitud', 'Longitud (WGS84)']:
+                df[c] = pd.to_numeric(df[c].str.replace(',', '.'), errors='coerce')
+            
+            df['Isla'] = df['Municipio'].map(MUNICIPIOS_ISLAS).fillna('Otras')
+            # Mantenemos las gasolineras aunque no tengan precio (para el mapa)
+            return df.dropna(subset=['Latitud', 'Longitud (WGS84)'])
+    except Exception as e:
+        print(f"❌ Error crítico: {e}")
+        return pd.DataFrame()
 
+# 3. GENERACIÓN DE LA WEB
 def generar_web(df):
+    if df.empty: return
+    
     canarias_tz = pytz.timezone('Atlantic/Canary')
     ahora = datetime.now(canarias_tz).strftime("%d/%m/%Y %H:%M")
     
-    # Historico y Variación Global
+    # Cargar Histórico para tendencias
     hist = pd.read_csv('historico_precios.csv') if os.path.exists('historico_precios.csv') else None
-    u_fecha = sorted(hist['Fecha'].unique())[-2] if hist is not None and len(hist['Fecha'].unique()) > 1 else None
-    texto_global = ""
-    if u_fecha:
-        m_ayer = hist[hist['Fecha'] == u_fecha]['Precio Gasolina 95 E5'].mean()
-        diff_g = df['Precio Gasolina 95 E5'].mean() - m_ayer
-        texto_global = f'<span style="color:{"red" if diff_g > 0 else "green"}; font-weight:bold;">{"▲" if diff_g > 0 else "▼"} {abs(diff_g):.3f}€ vs ayer</span>'
+    u_fecha = sorted(hist['Fecha'].unique())[-2] if (hist is not None and len(hist['Fecha'].unique()) > 1) else None
 
     mapa = folium.Map(location=[28.3, -15.8], zoom_start=8, tiles='cartodbpositron')
     
-    # Capas por isla
     islas_list = ['Tenerife', 'Gran Canaria', 'Lanzarote', 'Fuerteventura', 'La Palma', 'La Gomera', 'El Hierro']
     grupos = {i: folium.FeatureGroup(name=i).add_to(mapa) for i in islas_list}
     clusters = {i: MarkerCluster().add_to(grupos[i]) for i in islas_list}
@@ -50,115 +65,135 @@ def generar_web(df):
     q25 = df['Precio Gasolina 95 E5'].quantile(0.25)
 
     for _, f in df.iterrows():
-        # Variación individual
-        v_loc = ""
+        # Tendencias individuales
+        v_g95, v_die = "", ""
         if hist is not None and u_fecha:
             p_est = hist[(hist['Fecha'] == u_fecha) & (hist['Rótulo'] == f['Rótulo']) & (hist['Municipio'] == f['Municipio'])]
             if not p_est.empty:
-                d_l = f['Precio Gasolina 95 E5'] - p_est['Precio Gasolina 95 E5'].values[0]
-                if d_l != 0:
-                    v_loc = f'<br><b style="color:{"#e74c3c" if d_l > 0 else "#27ae60"};">{"▲" if d_l > 0 else "▼"} {abs(d_l):.3f}€</b>'
+                dg = f['Precio Gasolina 95 E5'] - p_est['Precio Gasolina 95 E5'].values[0]
+                dd = f['Precio Gasoleo A'] - p_est['Precio Gasoleo A'].values[0]
+                if dg != 0: v_g95 = f' <small style="color:{"red" if dg>0 else "green"}">{"▲" if dg>0 else "▼"}{abs(dg):.3f}</small>'
+                if dd != 0: v_die = f' <small style="color:{"red" if dd>0 else "green"}">{"▲" if dd>0 else "▼"}{abs(dd):.3f}</small>'
+
+        p_g95 = f"{f['Precio Gasolina 95 E5']:.3f}€" if pd.notnull(f['Precio Gasolina 95 E5']) else "N/A"
+        p_die = f"{f['Precio Gasoleo A']:.3f}€" if pd.notnull(f['Precio Gasoleo A']) else "N/A"
 
         color = "green" if f['Precio Gasolina 95 E5'] <= q25 else "orange" if f['Precio Gasolina 95 E5'] < 1.45 else "red"
         
-        # Guardamos el objeto marker para el buscador
+        pop_html = f"<b>{f['Rótulo']}</b><br>G95: {p_g95}{v_g95}<br>Diésel: {p_die}{v_die}"
+        
         marker = folium.Marker(
             [f['Latitud'], f['Longitud (WGS84)']], 
-            popup=folium.Popup(f"<b>{f['Rótulo']}</b><br>G95: {f['Precio Gasolina 95 E5']}€{v_loc}", max_width=200),
+            popup=folium.Popup(pop_html, max_width=200),
             icon=folium.Icon(color=color, icon='info-sign'),
-            name=f"{f['Rótulo']} ({f['Municipio']})" # Nombre para el buscador
+            name=f"{f['Rótulo']} ({f['Municipio']})"
         )
-        
-        isla_f = MUNICIPIOS_ISLAS.get(f['Municipio'], 'Otros')
-        if isla_f in clusters:
-            marker.add_to(clusters[isla_f])
+        if f['Isla'] in clusters: marker.add_to(clusters[f['Isla']])
 
-    # 🔍 BUSCADOR DE GASOLINERAS
-    Search(
-        layer=grupos['Gran Canaria'], # Usamos una capa de base, pero buscará en los nombres
-        geom_type='Point',
-        placeholder='Buscar gasolinera...',
-        collapsed=False,
-        search_label='name'
-    ).add_to(mapa)
-
+    Search(layer=grupos['Gran Canaria'], geom_type='Point', placeholder='Buscar gasolinera...', collapsed=False, search_label='name').add_to(mapa)
     folium.LayerControl(collapsed=False).add_to(mapa)
 
-    # Tablas con columnas renombradas
-    df_t = df.rename(columns={'Precio Gasolina 95 E5': 'G95 (€)', 'Precio Gasoleo A': 'Diésel (€)'})
-    t_g95 = df_t.nsmallest(10, 'G95 (€)')[['Rótulo', 'Municipio', 'G95 (€)']].to_html(classes='table table-sm table-hover text-center align-middle m-0', index=False)
-    t_die = df_t.nsmallest(10, 'Diésel (€)')[['Rótulo', 'Municipio', 'Diésel (€)']].to_html(classes='table table-sm table-hover text-center align-middle m-0', index=False)
+    # Datos para la tabla interactiva
+    json_data = df[['Rótulo', 'Municipio', 'Isla', 'Precio Gasolina 95 E5', 'Precio Gasoleo A']].rename(
+        columns={'Precio Gasolina 95 E5': 'g95', 'Precio Gasoleo A': 'diesel'}
+    ).to_json(orient='records')
 
-    # HTML y CSS Final con botones de Clear All
-    plantilla = f"""
+    html_layout = f"""
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css">
     <style>
-        .header-box {{ background: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 15px; }}
-        .card-header {{ font-weight: bold; font-size: 0.9rem; }}
-        .table {{ font-size: 0.85rem; table-layout: fixed; }}
-        th {{ background-color: #f8f9fa !important; }}
-        /* Estilo para los botones de Toggle en el mapa */
-        .toggle-btn-container {{ position: absolute; top: 180px; right: 10px; z-index: 1000; background: white; padding: 5px; border-radius: 4px; border: 2px solid rgba(0,0,0,0.2); }}
+        body {{ background: #f4f7f6; }}
+        .header-box {{ background: white; padding: 15px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }}
+        .interactive-card {{ background: white; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }}
+        .table-responsive {{ max-height: 450px; overflow-y: auto; }}
+        th {{ position: sticky; top: 0; background: #212529 !important; color: white; z-index: 10; }}
     </style>
     
     <div class="container-fluid p-3">
         <div class="header-box text-center">
-            <h2 class="mb-1">Canarias Gas Tracker ⛽</h2>
-            <small class="text-muted">🕒 {ahora} — {texto_global}</small>
+            <h2 class="fw-bold mb-1">Canarias Gas Tracker ⛽</h2>
+            <small class="text-muted">🕒 Actualizado: {ahora}</small>
         </div>
-        <div class="row g-3 mb-3">
-            <div class="col-md-6">
-                <div class="card shadow-sm border-0">
-                    <div class="card-header bg-primary text-white py-2">🏆 TOP 10 GASOLINA 95</div>
-                    <div class="card-body p-0">{t_g95}</div>
+
+        <div class="interactive-card">
+            <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center py-3">
+                <h6 class="m-0">🏆 TOP 10 BARATAS</h6>
+                <div class="d-flex gap-2">
+                    <select id="selIsla" class="form-select form-select-sm" style="width:140px" onchange="actualizarTabla()">
+                        <option value="Todas">Canarias (Todas)</option>
+                        {"".join([f'<option value="{i}">{i}</option>' for i in islas_list])}
+                    </select>
+                    <select id="selComb" class="form-select form-select-sm" style="width:120px" onchange="actualizarTabla()">
+                        <option value="g95">Gasolina 95</option>
+                        <option value="diesel">Diésel</option>
+                    </select>
                 </div>
             </div>
-            <div class="col-md-6">
-                <div class="card shadow-sm border-0">
-                    <div class="card-header bg-success text-white py-2">🏆 TOP 10 DIÉSEL</div>
-                    <div class="card-body p-0">{t_die}</div>
-                </div>
+            <div class="table-responsive">
+                <table class="table table-hover m-0">
+                    <thead class="text-center">
+                        <tr>
+                            <th style="width: 50px">#</th>
+                            <th class="text-start">Estación</th>
+                            <th>Municipio</th>
+                            <th style="width: 100px">Precio</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tablaCuerpo" class="text-center"></tbody>
+                </table>
             </div>
         </div>
     </div>
 
     <script>
-        // SCRIPT PARA EL BOTÓN "CLEAR ALL" EN EL SELECTOR DE CAPAS
-        document.addEventListener('DOMContentLoaded', function() {{
-            setTimeout(function() {{
-                var controlContainer = document.querySelector('.leaflet-control-layers-list');
-                if (controlContainer) {{
-                    var btnHtml = '<div class="d-flex gap-1 mt-2 p-1 border-top">' +
-                                  '<button class="btn btn-dark btn-sm w-100" onclick="toggleLayers(true)" style="font-size:10px">Todos</button>' +
-                                  '<button class="btn btn-outline-dark btn-sm w-100" onclick="toggleLayers(false)" style="font-size:10px">Nada</button>' +
-                                  '</div>';
-                    controlContainer.insertAdjacentHTML('beforeend', btnHtml);
-                }}
-            }}, 1000);
-        }});
-
-        function toggleLayers(show) {{
-            var inputs = document.querySelectorAll('.leaflet-control-layers-selector');
-            inputs.forEach(input => {{
-                if (input.checked !== show) {{
-                    input.click();
-                }}
-            }});
+        const datos = {json_data};
+        
+        function actualizarTabla() {{
+            const isla = document.getElementById('selIsla').value;
+            const comb = document.getElementById('selComb').value;
+            const cuerpo = document.getElementById('tablaCuerpo');
+            
+            let filtrados = datos.filter(d => (isla === 'Todas' || d.Isla === isla) && d[comb] !== null);
+            filtrados.sort((a, b) => a[comb] - b[comb]);
+            
+            const top10 = filtrados.slice(0, 10);
+            cuerpo.innerHTML = top10.map((d, i) => `
+                <tr>
+                    <td><span class="badge ${{i < 3 ? 'bg-success' : 'bg-secondary'}}">${{i+1}}</span></td>
+                    <td class="text-start"><b>${{d.Rótulo}}</b></td>
+                    <td><small>${{d.Municipio}}</small></td>
+                    <td class="fw-bold text-primary">${{d[comb].toFixed(3)}}€</td>
+                </tr>
+            `).join('');
+            
+            if(top10.length === 0) cuerpo.innerHTML = '<tr><td colspan="4" class="p-4 text-muted">No hay datos para esta selección</td></tr>';
         }}
+
+        document.addEventListener('DOMContentLoaded', () => {{
+            actualizarTabla();
+            setTimeout(() => {{
+                const control = document.querySelector('.leaflet-control-layers-list');
+                if(control) {{
+                    control.insertAdjacentHTML('beforeend', '<div class="d-flex gap-1 p-2 border-top"><button class="btn btn-dark btn-sm w-100" onclick="tg(true)" style="font-size:10px">Todas</button><button class="btn btn-outline-dark btn-sm w-100" onclick="tg(false)" style="font-size:10px">Ninguna</button></div>');
+                }}
+            }}, 1500);
+        }});
+        function tg(s) {{ document.querySelectorAll('.leaflet-control-layers-selector').forEach(i => {{ if(i.checked !== s) i.click(); }}); }}
     </script>
     """
-    mapa.get_root().html.add_child(folium.Element(plantilla))
+    mapa.get_root().html.add_child(folium.Element(html_layout))
     mapa.save("index.html")
 
 if __name__ == "__main__":
-    datos = obtener_datos()
-    # Guardar historico
-    fecha = datetime.now(pytz.timezone('Atlantic/Canary')).strftime("%Y-%m-%d")
-    df_h = datos[['Municipio', 'Rótulo', 'Precio Gasolina 95 E5', 'Precio Gasoleo A']].copy()
-    df_h['Fecha'] = fecha
-    if os.path.exists('historico_precios.csv'):
-        p = pd.read_csv('historico_precios.csv')
-        df_h = pd.concat([p, df_h]).drop_duplicates(subset=['Fecha', 'Rótulo', 'Municipio'])
-    df_h.to_csv('historico_precios.csv', index=False)
-    
-    generar_web(datos)
+    df_raw = obtener_datos()
+    if not df_raw.empty:
+        # Guardar histórico
+        fecha = datetime.now(pytz.timezone('Atlantic/Canary')).strftime("%Y-%m-%d")
+        df_h = df_raw[['Municipio', 'Rótulo', 'Precio Gasolina 95 E5', 'Precio Gasoleo A']].copy()
+        df_h['Fecha'] = fecha
+        if os.path.exists('historico_precios.csv'):
+            p = pd.read_csv('historico_precios.csv')
+            df_h = pd.concat([p, df_h]).drop_duplicates(subset=['Fecha', 'Rótulo', 'Municipio'])
+        df_h.to_csv('historico_precios.csv', index=False)
+        
+        generar_web(df_raw)
+        print("✅ Web generada con éxito.")
