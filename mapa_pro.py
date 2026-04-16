@@ -6,7 +6,6 @@ from datetime import datetime
 import pytz
 import os
 
-# 1. DICCIONARIO DE ISLAS (Para el filtrado)
 MUNICIPIOS_ISLAS = {
     'Arrecife': 'Lanzarote', 'Haría': 'Lanzarote', 'San Bartolomé': 'Lanzarote', 'Teguise': 'Lanzarote', 'Tías': 'Lanzarote', 'Tinajo': 'Lanzarote', 'Yaiza': 'Lanzarote',
     'Antigua': 'Fuerteventura', 'Betancuria': 'Fuerteventura', 'La Oliva': 'Fuerteventura', 'Pájara': 'Fuerteventura', 'Puerto del Rosario': 'Fuerteventura', 'Tuineje': 'Fuerteventura',
@@ -17,108 +16,117 @@ MUNICIPIOS_ISLAS = {
     'Frontera': 'El Hierro', 'El Pinar de El Hierro': 'El Hierro', 'Valverde': 'El Hierro'
 }
 
-def obtener_datos_canarias():
+def obtener_datos():
     url = "https://sedeaplicaciones.minetur.gob.es/ServiciosRESTCarburantes/PreciosCarburantes/EstacionesTerrestres/"
-    cabeceras = {'User-Agent': 'Mozilla/5.0'}
-    try:
-        r = requests.get(url, headers=cabeceras, timeout=20)
-        df = pd.DataFrame(r.json()['ListaEESSPrecio'])
-        df_can = df[df['IDProvincia'].isin(['35', '38'])].copy()
-        for col in ['Precio Gasolina 95 E5', 'Precio Gasoleo A', 'Latitud', 'Longitud (WGS84)']:
-            df_can[col] = pd.to_numeric(df_can[col].str.replace(',', '.'), errors='coerce')
-        return df_can.dropna(subset=['Precio Gasolina 95 E5', 'Latitud', 'Longitud (WGS84)'])
-    except Exception as e:
-        print(f"❌ Error API: {e}"); return None
+    r = requests.get(url, timeout=20)
+    df = pd.DataFrame(r.json()['ListaEESSPrecio'])
+    df = df[df['IDProvincia'].isin(['35', '38'])].copy()
+    for c in ['Precio Gasolina 95 E5', 'Precio Gasoleo A', 'Latitud', 'Longitud (WGS84)']:
+        df[c] = pd.to_numeric(df[c].str.replace(',', '.'), errors='coerce')
+    return df.dropna(subset=['Precio Gasolina 95 E5', 'Latitud', 'Longitud (WGS84)'])
 
-def actualizar_historico(df):
-    archivo = 'historico_precios.csv'
-    fecha = datetime.now(pytz.timezone('Atlantic/Canary')).strftime("%Y-%m-%d")
-    df_h = df[['Municipio', 'Rótulo', 'Precio Gasolina 95 E5', 'Precio Gasoleo A']].copy()
-    df_h['Fecha'] = fecha
-    if os.path.exists(archivo):
-        prev = pd.read_csv(archivo)
-        df_h = pd.concat([prev, df_h]).drop_duplicates(subset=['Fecha', 'Rótulo', 'Municipio'])
-    df_h.to_csv(archivo, index=False)
-
-def generar_visualizacion(df):
-    if df is None: return
+def generar_web(df):
     canarias_tz = pytz.timezone('Atlantic/Canary')
     ahora = datetime.now(canarias_tz).strftime("%d/%m/%Y %H:%M")
     
-    # 1. CÁLCULO DE VARIACIÓN GLOBAL (Lo que tenías antes)
-    texto_variacion = ""
+    # Cargar histórico para las variaciones individuales
     hist = pd.read_csv('historico_precios.csv') if os.path.exists('historico_precios.csv') else None
-    if hist is not None:
-        fechas = sorted(hist['Fecha'].unique())
-        if len(fechas) > 1:
-            u_fecha = fechas[-2]
-            m_ayer = hist[hist['Fecha'] == u_fecha]['Precio Gasolina 95 E5'].mean()
-            m_hoy = df['Precio Gasolina 95 E5'].mean()
-            diff_g = m_hoy - m_ayer
-            c_v = "red" if diff_g > 0 else "green"
-            f_v = "▲" if diff_g > 0 else "▼"
-            texto_variacion = f'<b style="color:{c_v}; margin-left:15px;">{f_v} {abs(diff_g):.3f}€ vs ayer (Media)</b>'
+    u_fecha = sorted(hist['Fecha'].unique())[-2] if hist is not None and len(hist['Fecha'].unique()) > 1 else None
 
-    # 2. MAPA Y CLUSTERS POR ISLA
+    # Variación Global para el título
+    texto_global = ""
+    if u_fecha:
+        m_ayer = hist[hist['Fecha'] == u_fecha]['Precio Gasolina 95 E5'].mean()
+        diff_g = df['Precio Gasolina 95 E5'].mean() - m_ayer
+        color_g = "red" if diff_g > 0 else "green"
+        texto_global = f'<span style="color:{color_g}; font-weight:bold; margin-left:10px;">{"▲" if diff_g > 0 else "▼"} {abs(diff_g):.3f}€ vs ayer</span>'
+
     mapa = folium.Map(location=[28.3, -15.8], zoom_start=8, tiles='cartodbpositron')
-    islas_nombres = ['Tenerife', 'Gran Canaria', 'Lanzarote', 'Fuerteventura', 'La Palma', 'La Gomera', 'El Hierro']
-    capas = {nom: MarkerCluster().add_to(folium.FeatureGroup(name=nom).add_to(mapa)) for nom in islas_nombres}
     
-    u_verde = df['Precio Gasolina 95 E5'].quantile(0.25)
+    # Capas por isla
+    islas = ['Tenerife', 'Gran Canaria', 'Lanzarote', 'Fuerteventura', 'La Palma', 'La Gomera', 'El Hierro']
+    grupos = {i: MarkerCluster(name=i).add_to(mapa) for i in islas}
+    
+    q25 = df['Precio Gasolina 95 E5'].quantile(0.25)
 
-    for _, fila in df.iterrows():
-        # Variación individual (Local)
-        var_local = ""
-        if hist is not None and len(fechas) > 1:
-            prev_est = hist[(hist['Fecha'] == fechas[-2]) & (hist['Rótulo'] == fila['Rótulo']) & (hist['Municipio'] == fila['Municipio'])]
-            if not prev_est.empty:
-                d_l = fila['Precio Gasolina 95 E5'] - prev_est['Precio Gasolina 95 E5'].values[0]
-                if d_l != 0:
-                    c_l = "red" if d_l > 0 else "green"
-                    f_l = "▲" if d_l > 0 else "▼"
-                    var_local = f'<br><span style="color:{c_l}; font-size: 0.85em;">{f_l} {abs(d_l):.3f}€</span>'
+    for _, f in df.iterrows():
+        # Lógica de variación por cada gasolinera (Lo que pediste)
+        v_loc = ""
+        if hist is not None and u_fecha:
+            p_est = hist[(hist['Fecha'] == u_fecha) & (hist['Rótulo'] == f['Rótulo']) & (f['Municipio'] == f['Municipio'])]
+            if not p_est.empty:
+                diff_l = f['Precio Gasolina 95 E5'] - p_est['Precio Gasolina 95 E5'].values[0]
+                if diff_l != 0:
+                    c_l = "#e74c3c" if diff_l > 0 else "#27ae60"
+                    v_loc = f'<br><b style="color:{c_l};">{ "▲" if diff_l > 0 else "▼"} {abs(diff_l):.3f}€</b>'
 
-        color = "green" if fila['Precio Gasolina 95 E5'] <= u_verde else "orange" if fila['Precio Gasolina 95 E5'] < 1.40 else "red"
-        pop_html = f"<b>{fila['Rótulo']}</b><hr style='margin:5px 0;'>G95: {fila['Precio Gasolina 95 E5']}€ {var_local}<br>Diésel: {fila['Precio Gasoleo A']}€"
+        color = "green" if f['Precio Gasolina 95 E5'] <= q25 else "orange" if f['Precio Gasolina 95 E5'] < 1.45 else "red"
         
-        isla = MUNICIPIOS_ISLAS.get(fila['Municipio'], 'Otros')
-        if isla in capas:
-            folium.Marker(
-                [fila['Latitud'], fila['Longitud (WGS84)']],
-                popup=folium.Popup(pop_html, max_width=250),
-                icon=folium.Icon(color=color, icon='info-sign')
-            ).add_to(capas[isla])
+        # HTML del Popup mejorado
+        html_pop = f"""
+        <div style="font-family: Arial; width: 160px;">
+            <div style="background:#2c3e50; color:white; padding:5px; border-radius:3px; font-size:12px;"><b>{f['Rótulo']}</b></div>
+            <div style="padding:8px; border: 1px solid #ccc; border-top:none;">
+                <b>G95:</b> {f['Precio Gasolina 95 E5']}€ {v_loc}<br>
+                <b>Diésel:</b> {f['Precio Gasoleo A']}€
+            </div>
+        </div>
+        """
+        
+        isla_f = MUNICIPIOS_ISLAS.get(f['Municipio'], 'Otros')
+        if isla_f in grupos:
+            folium.Marker([f['Latitud'], f['Longitud (WGS84)']], 
+                          popup=folium.Popup(html_pop, max_width=200),
+                          icon=folium.Icon(color=color, icon='info-sign')).add_to(grupos[isla_f])
 
     folium.LayerControl(collapsed=False).add_to(mapa)
 
-    # 3. TABLAS DUALES (GASOLINA Y DIÉSEL)
-    t_g95 = df.nsmallest(10, 'Precio Gasolina 95 E5')[['Rótulo', 'Municipio', 'Precio Gasolina 95 E5']].to_html(classes='table table-sm table-dark table-striped', index=False)
-    t_die = df.nsmallest(10, 'Precio Gasoleo A')[['Rótulo', 'Municipio', 'Precio Gasoleo A']].to_html(classes='table table-sm table-dark table-striped', index=False)
+    # Arreglar nombres de columnas para las tablas
+    df_t = df.rename(columns={'Precio Gasolina 95 E5': 'G95 (€)', 'Precio Gasoleo A': 'Diésel (€)'})
+    t_g95 = df_t.nsmallest(10, 'G95 (€)')[['Rótulo', 'Municipio', 'G95 (€)']].to_html(classes='table table-sm table-hover text-center', index=False)
+    t_die = df_t.nsmallest(10, 'Diésel (€)')[['Rótulo', 'Municipio', 'Diésel (€)']].to_html(classes='table table-sm table-hover text-center', index=False)
 
-    plantilla = f"""
+    estilo_y_tablas = f"""
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css">
-    <div style="padding: 20px; background-color: #f8f9fa;">
-        <h1 style="text-align:center;">Canarias Gas Tracker ⛽</h1>
-        <p style="text-align:center;">🕒 Actualizado: <b>{ahora}</b> {texto_variacion}</p>
-        <div class="container-fluid">
-            <div class="row mt-4">
-                <div class="col-md-6">
-                    <h5 class="text-center text-primary">🏆 Top 10 Económicas (G95)</h5>
-                    {t_g95}
+    <style>
+        body {{ background-color: #f4f7f6; }}
+        .header-box {{ background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 20px; }}
+        .table {{ background: white; border-radius: 8px; overflow: hidden; font-size: 0.9em; }}
+        .thead-dark th {{ background-color: #343a40; color: white; }}
+    </style>
+    <div class="container-fluid p-4">
+        <div class="header-box text-center">
+            <h1 class="display-6">Canarias Gas Tracker ⛽</h1>
+            <p class="text-muted">🕒 Actualizado: {ahora} {texto_global}</p>
+        </div>
+        <div class="row g-4 mb-4">
+            <div class="col-lg-6">
+                <div class="card shadow-sm">
+                    <div class="card-header bg-primary text-white text-center">🏆 Top 10 Baratas: Gasolina 95</div>
+                    <div class="card-body p-0">{t_g95}</div>
                 </div>
-                <div class="col-md-6">
-                    <h5 class="text-center text-success">🏆 Top 10 Económicas (Diésel)</h5>
-                    {t_die}
+            </div>
+            <div class="col-lg-6">
+                <div class="card shadow-sm">
+                    <div class="card-header bg-success text-white text-center">🏆 Top 10 Baratas: Diésel</div>
+                    <div class="card-body p-0">{t_die}</div>
                 </div>
             </div>
         </div>
     </div>
     """
-    mapa.get_root().html.add_child(folium.Element(plantilla))
+    mapa.get_root().html.add_child(folium.Element(estilo_y_tablas))
     mapa.save("index.html")
 
 if __name__ == "__main__":
-    datos = obtener_datos_canarias()
-    if datos is not None:
-        generar_visualizacion(datos)
-        actualizar_historico(datos)
+    datos = obtener_datos()
+    # Guardar histórico ANTES de generar web para tener la comparación lista
+    fecha = datetime.now(pytz.timezone('Atlantic/Canary')).strftime("%Y-%m-%d")
+    df_h = datos[['Municipio', 'Rótulo', 'Precio Gasolina 95 E5', 'Precio Gasoleo A']].copy()
+    df_h['Fecha'] = fecha
+    if os.path.exists('historico_precios.csv'):
+        p = pd.read_csv('historico_precios.csv')
+        df_h = pd.concat([p, df_h]).drop_duplicates(subset=['Fecha', 'Rótulo', 'Municipio'])
+    df_h.to_csv('historico_precios.csv', index=False)
+    
+    generar_web(datos)
