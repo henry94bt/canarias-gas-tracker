@@ -1,24 +1,31 @@
 import requests
-import pandas as pd
+import pd as pd
 import folium
 from folium.plugins import MarkerCluster, Search
 from datetime import datetime
 import pytz
 import os
-import json
 
-# 1. DICCIONARIO DE ISLAS (Para el filtrado de la tabla y el mapa)
-MUNICIPIOS_ISLAS = {
-    'Arrecife': 'Lanzarote', 'Haría': 'Lanzarote', 'San Bartolomé': 'Lanzarote', 'Teguise': 'Lanzarote', 'Tías': 'Lanzarote', 'Tinajo': 'Lanzarote', 'Yaiza': 'Lanzarote',
-    'Antigua': 'Fuerteventura', 'Betancuria': 'Fuerteventura', 'La Oliva': 'Fuerteventura', 'Pájara': 'Fuerteventura', 'Puerto del Rosario': 'Fuerteventura', 'Tuineje': 'Fuerteventura',
-    'Agaete': 'Gran Canaria', 'Agüimes': 'Gran Canaria', 'Artenara': 'Gran Canaria', 'Arucas': 'Gran Canaria', 'Firgas': 'Gran Canaria', 'Gáldar': 'Gran Canaria', 'Ingenio': 'Gran Canaria', 'Mogán': 'Gran Canaria', 'Moya': 'Gran Canaria', 'Las Palmas de Gran Canaria': 'Gran Canaria', 'San Bartolomé de Tirajana': 'Gran Canaria', 'Santa Brígida': 'Gran Canaria', 'Santa Lucía de Tirajana': 'Gran Canaria', 'Santa María de Guía de Gran Canaria': 'Gran Canaria', 'Tejeda': 'Gran Canaria', 'Telde': 'Gran Canaria', 'Teror': 'Gran Canaria', 'Valleseco': 'Gran Canaria', 'Valsequillo de Gran Canaria': 'Gran Canaria', 'Vega de San Mateo': 'Gran Canaria',
-    'Adeje': 'Tenerife', 'Arafo': 'Tenerife', 'Arico': 'Tenerife', 'Arona': 'Tenerife', 'Buenavista del Norte': 'Tenerife', 'Candelaria': 'Tenerife', 'Fasnia': 'Tenerife', 'Garachico': 'Tenerife', 'Granadilla de Abona': 'Tenerife', 'La Guancha': 'Tenerife', 'Guía de Isora': 'Tenerife', 'Icod de los Vinos': 'Tenerife', 'La Matanza de Acentejo': 'Tenerife', 'La Orotava': 'Tenerife', 'Puerto de la Cruz': 'Tenerife', 'Los Realejos': 'Tenerife', 'El Rosario': 'Tenerife', 'San Cristóbal de La Laguna': 'Tenerife', 'San Juan de la Rambla': 'Tenerife', 'San Miguel de Abona': 'Tenerife', 'Santa Cruz de Tenerife': 'Tenerife', 'Santa Úrsula': 'Tenerife', 'Santiago del Teide': 'Tenerife', 'El Sauzal': 'Tenerife', 'Los Silos': 'Tenerife', 'Tacoronte': 'Tenerife', 'El Tanque': 'Tenerife', 'Tegueste': 'Tenerife', 'La Victoria de Acentejo': 'Tenerife', 'Vilaflor de Chasna': 'Tenerife',
-    'Agulo': 'La Gomera', 'Alajeró': 'La Gomera', 'Hermigua': 'La Gomera', 'San Sebastián de la Gomera': 'La Gomera', 'Valle Gran Rey': 'La Gomera', 'Vallehermoso': 'La Gomera',
-    'Barlovento': 'La Palma', 'Breña Alta': 'La Palma', 'Breña Baja': 'La Palma', 'Fuencaliente de la Palma': 'La Palma', 'Garafía': 'La Palma', 'Los Llanos de Aridane': 'La Palma', 'El Paso': 'La Palma', 'Puntagorda': 'La Palma', 'Puntallana': 'La Palma', 'San Andrés y Sauces': 'La Palma', 'Santa Cruz de la Palma': 'La Palma', 'Tazacorte': 'La Palma', 'Tijarafe': 'La Palma', 'Villa de Mazo': 'La Palma',
-    'Frontera': 'El Hierro', 'El Pinar de El Hierro': 'El Hierro', 'Valverde': 'El Hierro'
-}
+# 1. FUNCIÓN ROBUSTA DE MAPEO DE ISLAS (Data Cleaning)
+def obtener_isla(municipio):
+    mun = str(municipio).upper()
+    if any(x in mun for x in ['PALMAS', 'TELDE', 'AGAETE', 'AGÜIMES', 'ARTENARA', 'ARUCAS', 'FIRGAS', 'GÁLDAR', 'INGENIO', 'MOGÁN', 'MOYA', 'TIRAJANA', 'BRÍGIDA', 'LUCÍA', 'GUÍA DE GRAN CANARIA', 'TEJEDA', 'TEROR', 'VALLESECO', 'VALSEQUILLO', 'MATEO', 'ALDEA']): 
+        return 'Gran Canaria'
+    elif any(x in mun for x in ['OLIVA', 'ANTIGUA', 'BETANCURIA', 'PÁJARA', 'PUERTO DEL ROSARIO', 'TUINEJE']): 
+        return 'Fuerteventura'
+    elif any(x in mun for x in ['ARRECIFE', 'HARÍA', 'SAN BARTOLOMÉ', 'TEGUISE', 'TÍAS', 'TINAJO', 'YAIZA']): 
+        return 'Lanzarote'
+    elif any(x in mun for x in ['CRUZ DE TENERIFE', 'ADEJE', 'ARAFO', 'ARICO', 'ARONA', 'BUENAVISTA', 'CANDELARIA', 'FASNIA', 'GARACHICO', 'GRANADILLA', 'GUANCHA', 'ISORA', 'ICOD', 'MATANZA', 'OROTAVA', 'PUERTO DE LA CRUZ', 'REALEJOS', 'ROSARIO', 'LAGUNA', 'RAMBLA', 'SAN MIGUEL', 'ÚRSULA', 'SANTIAGO DEL TEIDE', 'SAUZAL', 'SILOS', 'TACORONTE', 'TANQUE', 'TEGUESTE', 'VICTORIA', 'VILAFLOR']): 
+        return 'Tenerife'
+    elif any(x in mun for x in ['BARLOVENTO', 'BREÑA', 'FUENCALIENTE', 'GARAFÍA', 'LLANOS DE ARIDANE', 'PASO', 'PUNTAGORDA', 'PUNTALLANA', 'SAN ANDRÉS', 'CRUZ DE LA PALMA', 'TAZACORTE', 'TIJARAFE', 'MAZO']): 
+        return 'La Palma'
+    elif any(x in mun for x in ['AGULO', 'ALAJERÓ', 'HERMIGUA', 'SAN SEBASTIÁN', 'VALLE GRAN REY', 'VALLEHERMOSO']): 
+        return 'La Gomera'
+    elif any(x in mun for x in ['FRONTERA', 'PINAR', 'VALVERDE']): 
+        return 'El Hierro'
+    return 'Otras'
 
-# 2. OBTENCIÓN DE DATOS (CON CAMUFLAJE ANTI-BLOQUEO)
+# 2. OBTENCIÓN DE DATOS
 def obtener_datos():
     url = "https://sedeaplicaciones.minetur.gob.es/ServiciosRESTCarburantes/PreciosCarburantes/EstacionesTerrestres/"
     headers = {
@@ -38,8 +45,9 @@ def obtener_datos():
             for c in ['Precio Gasolina 95 E5', 'Precio Gasoleo A', 'Latitud', 'Longitud (WGS84)']:
                 df[c] = pd.to_numeric(df[c].str.replace(',', '.'), errors='coerce')
             
-            df['Isla'] = df['Municipio'].map(MUNICIPIOS_ISLAS).fillna('Otras')
-            # Mantenemos las gasolineras aunque no tengan precio (para el mapa)
+            # Asignar Isla con la nueva función a prueba de fallos
+            df['Isla'] = df['Municipio'].apply(obtener_isla)
+            
             return df.dropna(subset=['Latitud', 'Longitud (WGS84)'])
     except Exception as e:
         print(f"❌ Error crítico: {e}")
@@ -52,7 +60,6 @@ def generar_web(df):
     canarias_tz = pytz.timezone('Atlantic/Canary')
     ahora = datetime.now(canarias_tz).strftime("%d/%m/%Y %H:%M")
     
-    # Cargar Histórico para tendencias
     hist = pd.read_csv('historico_precios.csv') if os.path.exists('historico_precios.csv') else None
     u_fecha = sorted(hist['Fecha'].unique())[-2] if (hist is not None and len(hist['Fecha'].unique()) > 1) else None
 
@@ -65,7 +72,6 @@ def generar_web(df):
     q25 = df['Precio Gasolina 95 E5'].quantile(0.25)
 
     for _, f in df.iterrows():
-        # Tendencias individuales
         v_g95, v_die = "", ""
         if hist is not None and u_fecha:
             p_est = hist[(hist['Fecha'] == u_fecha) & (hist['Rótulo'] == f['Rótulo']) & (hist['Municipio'] == f['Municipio'])]
@@ -80,21 +86,22 @@ def generar_web(df):
 
         color = "green" if f['Precio Gasolina 95 E5'] <= q25 else "orange" if f['Precio Gasolina 95 E5'] < 1.45 else "red"
         
-        pop_html = f"<b>{f['Rótulo']}</b><br>G95: {p_g95}{v_g95}<br>Diésel: {p_die}{v_die}"
+        # Ahora el popup muestra la Dirección y la Localidad
+        pop_html = f"<b>{f['Rótulo']}</b><br><small>{f['Dirección']} ({f['Localidad']})</small><br><hr style='margin:5px 0'>G95: {p_g95}{v_g95}<br>Diésel: {p_die}{v_die}"
         
+        # El buscador ahora lee el Rótulo, la Localidad (Corralejo) y el Municipio
         marker = folium.Marker(
             [f['Latitud'], f['Longitud (WGS84)']], 
-            popup=folium.Popup(pop_html, max_width=200),
+            popup=folium.Popup(pop_html, max_width=250),
             icon=folium.Icon(color=color, icon='info-sign'),
-            name=f"{f['Rótulo']} ({f['Municipio']})"
+            name=f"{f['Rótulo']} - {f['Localidad']} - {f['Municipio']}"
         )
         if f['Isla'] in clusters: marker.add_to(clusters[f['Isla']])
 
-    Search(layer=grupos['Gran Canaria'], geom_type='Point', placeholder='Buscar gasolinera...', collapsed=False, search_label='name').add_to(mapa)
+    Search(layer=grupos['Gran Canaria'], geom_type='Point', placeholder='Buscar estación o localidad...', collapsed=False, search_label='name').add_to(mapa)
     folium.LayerControl(collapsed=False).add_to(mapa)
 
-    # Datos para la tabla interactiva
-    json_data = df[['Rótulo', 'Municipio', 'Isla', 'Precio Gasolina 95 E5', 'Precio Gasoleo A']].rename(
+    json_data = df[['Rótulo', 'Municipio', 'Localidad', 'Isla', 'Precio Gasolina 95 E5', 'Precio Gasoleo A']].rename(
         columns={'Precio Gasolina 95 E5': 'g95', 'Precio Gasoleo A': 'diesel'}
     ).to_json(orient='records')
 
@@ -134,7 +141,7 @@ def generar_web(df):
                         <tr>
                             <th style="width: 50px">#</th>
                             <th class="text-start">Estación</th>
-                            <th>Municipio</th>
+                            <th>Localidad</th>
                             <th style="width: 100px">Precio</th>
                         </tr>
                     </thead>
@@ -160,7 +167,7 @@ def generar_web(df):
                 <tr>
                     <td><span class="badge ${{i < 3 ? 'bg-success' : 'bg-secondary'}}">${{i+1}}</span></td>
                     <td class="text-start"><b>${{d.Rótulo}}</b></td>
-                    <td><small>${{d.Municipio}}</small></td>
+                    <td><small>${{d.Localidad}}</small></td>
                     <td class="fw-bold text-primary">${{d[comb].toFixed(3)}}€</td>
                 </tr>
             `).join('');
@@ -186,7 +193,6 @@ def generar_web(df):
 if __name__ == "__main__":
     df_raw = obtener_datos()
     if not df_raw.empty:
-        # Guardar histórico
         fecha = datetime.now(pytz.timezone('Atlantic/Canary')).strftime("%Y-%m-%d")
         df_h = df_raw[['Municipio', 'Rótulo', 'Precio Gasolina 95 E5', 'Precio Gasoleo A']].copy()
         df_h['Fecha'] = fecha
@@ -194,6 +200,5 @@ if __name__ == "__main__":
             p = pd.read_csv('historico_precios.csv')
             df_h = pd.concat([p, df_h]).drop_duplicates(subset=['Fecha', 'Rótulo', 'Municipio'])
         df_h.to_csv('historico_precios.csv', index=False)
-        
         generar_web(df_raw)
         print("✅ Web generada con éxito.")
