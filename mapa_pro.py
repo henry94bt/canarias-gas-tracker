@@ -1,5 +1,5 @@
 import requests
-import pd as pd
+import pandas as pd
 import folium
 from folium.plugins import MarkerCluster, Search
 from datetime import datetime
