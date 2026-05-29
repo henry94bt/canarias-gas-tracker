@@ -27,13 +27,16 @@ def obtener_isla(municipio):
     return 'Otras'
 
 
-# 2. OBTENCIÓN DE DATOS — con reintentos
-def obtener_datos(max_reintentos=3, espera=10):
+# 2. OBTENCIÓN DE DATOS — con reintentos espaciados (backoff)
+# Esperas crecientes entre intentos: si la API está caída un rato,
+# una sola ejecución cubre ~30 minutos de fallos sin commits duplicados.
+def obtener_datos(esperas_minutos=[5, 10, 15]):
     url = "https://sedeaplicaciones.minetur.gob.es/ServiciosRESTCarburantes/PreciosCarburantes/EstacionesTerrestres/"
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
 
+    max_reintentos = len(esperas_minutos) + 1  # nº de esperas + el intento inicial
     for intento in range(1, max_reintentos + 1):
         try:
             print(f"🛰️  Intento {intento}/{max_reintentos} — conectando con la API...")
@@ -60,9 +63,10 @@ def obtener_datos(max_reintentos=3, espera=10):
 
         except Exception as e:
             print(f"⚠️  Error en intento {intento}: {e}")
-            if intento < max_reintentos:
-                print(f"   Reintentando en {espera} segundos...")
-                time.sleep(espera)
+            if intento <= len(esperas_minutos):
+                espera_min = esperas_minutos[intento - 1]
+                print(f"   Reintentando en {espera_min} minutos...")
+                time.sleep(espera_min * 60)
 
     print("❌ Error crítico: la API no respondió tras todos los reintentos.")
     return pd.DataFrame()
