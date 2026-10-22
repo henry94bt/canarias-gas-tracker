@@ -96,7 +96,7 @@ def generar_web(df):
     hist = pd.read_csv('historico_precios.csv') if os.path.exists('historico_precios.csv') else None
     u_fecha = sorted(hist['Fecha'].unique())[-2] if (hist is not None and len(hist['Fecha'].unique()) > 1) else None
 
-    mapa = folium.Map(location=[28.3, -15.8], zoom_start=8, tiles='cartodbpositron')
+    mapa = folium.Map(location=[28.3, -15.8], zoom_start=8, tiles='OpenStreetMap')
 
     islas_list = ['Tenerife', 'Gran Canaria', 'Lanzarote', 'Fuerteventura', 'La Palma', 'La Gomera', 'El Hierro']
     grupos = {i: folium.FeatureGroup(name=i).add_to(mapa) for i in islas_list}
